@@ -1,85 +1,85 @@
 import axios from 'axios'
-import config from '@/config'
-import router from '@/router'
-import Store from '@/store'
-import merge from 'lodash/merge'
-import qs from 'qs'
+import { MessageBox, Message } from 'element-ui'
+import store from '@/store'
+import { getToken } from '@/utils/auth'
 
-const http = axios.create({
-  // 设置请求超时事件
-  timeout: 10000,
-  withCredentials: true,
-  headers: {
-    'Content-type': 'application/x-www-form-urlencoded;charset=UTF-8'
-  }
+// create an axios instance
+const service = axios.create({
+  baseURL: process.env.VUE_APP_BASE_API, // url = base url + request url
+  // withCredentials: true, // send cookies when cross-domain requests
+  timeout: 5000 // request timeout
 })
 
-/**
- *  请求拦截
- */
-http.interceptors.request.use(config => {
-  const token = Store.state.token
-  // 每次请求前判断vuex中是否存在token
-  // 如果存在 则统一在http请求的header都加上token，这样后台可以判断登录情况
-  token && (config.headers.Authorization = token)
-  return config
-}, error => {
-  return Promise.reject(error)
-})
+// request interceptor
+service.interceptors.request.use(
+  config => {
+    // do something before request is sent
 
-/**
- * 响应拦截
- */
-http.interceptors.response.use(response => {
-  if (response.data && response.data.code === 401) {
-    // 401 token失效 设置token为空
-    Store.commit('setToken', '')
-    // 路由到登录页
-    router.push({name: 'login'})
+    if (store.getters.token) {
+      // let each request carry token
+      // ['X-Token'] is a custom headers key
+      // please modify it according to the actual situation
+      config.headers['X-Token'] = getToken()
+    }
+    return config
+  },
+  error => {
+    // do something with request error
+    console.log(error) // for debug
+    return Promise.reject(error)
   }
-  return response
-}, error => {
-  return Promise.reject(error)
-})
+)
 
-/**
- *  设置请求路径
- * @param actionUrl  请求资源
- * @returns {*}
- */
-http.requestBaseUrl = (actionUrl) => {
-  // 开发环境基本地址为本地 8080 端口
-  const baseUrl = process.env.NODE_ENV === 'development' ? config.baseUrl.dev : config.baseUrl.pro
-  console.log(baseUrl)
-  return baseUrl + actionUrl
-}
+// response interceptor
+service.interceptors.response.use(
+  /**
+   * If you want to get http information such as headers or status
+   * Please return  response => response
+  */
 
-/**
- *  设置get请求的参数加上当前时间
- * @param params              请求参数
- * @param openDefultParams   是否加上当前事件： 默认true
- * @returns {*}
- */
-http.adornGetParams = (params = {}, openDefultParams = true) => {
-  let defaults = {
-    '_t': new Date().getTime()
+  /**
+   * Determine the request status by custom code
+   * Here is just an example
+   * You can also judge the status by HTTP Status Code
+   */
+  response => {
+    const res = response.data
+
+    // if the custom code is not 20000, it is judged as an error.
+    if (res.code !== 20000) {
+      Message({
+        message: res.message || 'Error',
+        type: 'error',
+        duration: 5 * 1000
+      })
+
+      // 50008: Illegal token; 50012: Other clients logged in; 50014: Token expired;
+      if (res.code === 50008 || res.code === 50012 || res.code === 50014) {
+        // to re-login
+        MessageBox.confirm('You have been logged out, you can cancel to stay on this page, or log in again', 'Confirm logout', {
+          confirmButtonText: 'Re-Login',
+          cancelButtonText: 'Cancel',
+          type: 'warning'
+        }).then(() => {
+          store.dispatch('user/resetToken').then(() => {
+            location.reload()
+          })
+        })
+      }
+      return Promise.reject(new Error(res.message || 'Error'))
+    } else {
+      return res
+    }
+  },
+  error => {
+    console.log('err' + error) // for debug
+    Message({
+      message: error.message,
+      type: 'error',
+      duration: 5 * 1000
+    })
+    return Promise.reject(error)
   }
-  return openDefultParams ? merge(defaults, params) : params
-}
+)
 
-/**
- *  Post请求数据处理
- * @param data              数据对象
- * @param openDefultParams    是否添加时间参数
- * @param contentType       是否是json字符串格式
- * @returns {string}
- */
-http.adornPostParams = (data = {}, openDefultParams = true, contentType = 'json') => {
-  let defaults = {
-    '_t': new Date().getTime()
-  }
-  data = openDefultParams ? merge(defaults, data) : data
-  return contentType === 'json' ? JSON.stringify(data) : qs.stringify(data)
-}
-
-export default http
+export default service
